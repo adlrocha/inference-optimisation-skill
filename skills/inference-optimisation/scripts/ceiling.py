@@ -14,7 +14,9 @@ Example model.json (Ornith-1.5-35B-A3B EXL3 4bpw on an Arc B390 iGPU; sizes in G
 }
 Dense models: set experts_gb to 0. draft_head_gb is the draft LM head as read per draft step (prune it!).
 """
-import json, sys
+import json
+import sys
+from pathlib import Path
 
 
 def decode_ceiling(m, drafts, accept, ctx=0, n=1):
@@ -32,7 +34,7 @@ def prefill_ceiling(m, L):
 
 
 def main(path):
-    m = json.load(open(path))
+    m = json.loads(Path(path).read_text())
     print(f"bandwidth {m['bandwidth_gbs']} GB/s, peak {m['peak_tflops']} TFLOPS, MFU {m['mfu']}")
     for n in m.get("concurrency", [1]):
         print(f"\nDecode ceiling, concurrency {n} (aggregate tok/s):")
