@@ -27,8 +27,19 @@ Measurements (all token counts come from the server's usage stats, never from st
   mem_peak_gib, flags (LOOP, REQ_FAIL, ON_BATTERY, MEM_CAP). Results are appended to ledger.jsonl.
 The server is left running after a run (the next run's launch stops it first); stop it yourself when done.
 """
-import json, os, random, statistics, string, subprocess, sys, threading, time, urllib.request
+import http.client
+import json
+import os
+import random
+import statistics
+import string
+import subprocess
+import sys
+import threading
+import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROMPTS = [  # fixed panel: acceptance and speed depend on content, so never randomise these
@@ -39,8 +50,10 @@ PROMPTS = [  # fixed panel: acceptance and speed depend on content, so never ran
     "Write a bash script that backs up a directory to a timestamped tar.gz and keeps only the last 7 backups.",
     "Summarise the causes and consequences of the 1929 stock market crash in five paragraphs.",
 ]
-WORDS = ("river stone paper cloud engine garden silver market winter orange signal harbor violet "
-         "candle forest mirror thunder copper meadow lantern").split()
+WORDS = [
+    "river", "stone", "paper", "cloud", "engine", "garden", "silver", "market", "winter", "orange",
+    "signal", "harbor", "violet", "candle", "forest", "mirror", "thunder", "copper", "meadow", "lantern",
+]
 
 
 def log(*a):
@@ -58,7 +71,7 @@ class Server:
     def healthy(self):
         try:
             return bool(self.get("/v1/models").get("data"))
-        except Exception:
+        except (OSError, ValueError, TypeError, AttributeError, http.client.HTTPException):
             return False
 
     def chat(self, prompt, max_tokens, temperature=None, timeout=7200):
@@ -122,11 +135,11 @@ def document(tokens, seed, needles=3):
 def on_ac():
     try:
         if sys.platform == "darwin":
-            return "AC Power" in subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True).stdout
+            return "AC Power" in subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, check=False).stdout
         import glob
-        vals = [open(p).read().strip() for p in glob.glob("/sys/class/power_supply/*/online")]
+        vals = [Path(p).read_text().strip() for p in glob.glob("/sys/class/power_supply/*/online")]
         return not vals or "1" in vals
-    except Exception:
+    except (OSError, UnicodeError, subprocess.SubprocessError):
         return True
 
 
@@ -139,8 +152,9 @@ class MemWatch(threading.Thread):
         cap = self.mcfg.get("cap_gib", 1e9) * 2**30
         while not self.stop.wait(self.mcfg.get("interval_s", 3)):
             try:
-                b = int(subprocess.run(self.mcfg["probe"], capture_output=True, text=True, timeout=30).stdout.strip() or 0)
-            except Exception:
+                b = int(subprocess.run(self.mcfg["probe"], capture_output=True, text=True, timeout=30, check=False).stdout.strip() or 0)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                log(f"memory probe failed: {error}")
                 continue
             self.peak = max(self.peak, b)
             if b > cap and not self.tripped:
@@ -150,14 +164,14 @@ class MemWatch(threading.Thread):
 
 
 def run(cfg_path, long_ctx=None, skip_cn=False, reps=6):
-    cfg = json.load(open(cfg_path))
+    cfg = json.loads(Path(cfg_path).read_text())
     srv, res, flags = Server(cfg), {"name": cfg["name"], "time": time.strftime("%Y-%m-%dT%H:%M:%S")}, []
     if cfg.get("require_ac") and not on_ac():
         sys.exit("refusing to run on battery (require_ac)")
 
     def stop_server():
         if cfg.get("stop"):
-            subprocess.run(cfg["stop"], capture_output=True)
+            subprocess.run(cfg["stop"], capture_output=True, check=False)
 
     watch = MemWatch(cfg["memory"], stop_server) if cfg.get("memory", {}).get("probe") else None
     if cfg.get("launch"):
@@ -221,7 +235,7 @@ def run(cfg_path, long_ctx=None, skip_cn=False, reps=6):
                            "retrieval": f"{sum(c in r['text'] for c in codes)}/{len(codes)}"}
             log("long", res["long"])
         res["ok"] = True
-    except Exception as e:
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, ArithmeticError, http.client.HTTPException) as e:
         res.update(ok=False, error=repr(e)); flags.append("REQ_FAIL")
     return finish(res, flags, watch)
 
@@ -242,7 +256,8 @@ def finish(res, flags, watch):
 
 
 def show(path="ledger.jsonl"):
-    rows = [json.loads(l) for l in open(path) if l.strip()]
+    with open(path) as ledger:
+        rows = [json.loads(line) for line in ledger if line.strip()]
     agg = sorted({k for d in rows for k in d if k.startswith("c") and k.endswith("_aggregate")})
     pre = sorted({k for d in rows for k in d if k.startswith("prefill_") and k[8:].isdigit()}, key=lambda k: int(k[8:]))
     keys = ["c1_decode", *agg, *pre, "ttft_short_ms", "startup_s", "mem_peak_gib"]

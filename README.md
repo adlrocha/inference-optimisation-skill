@@ -146,6 +146,12 @@ python3 $S/scripts/bench.py show                                            # le
 
 PRs with new levers, gotchas or results are welcome. Each needs the hardware, model, quantization, engine version, before → after numbers, how they were measured, and a link to raw data.
 
+## Development
+
+Run `pytest -q` for the helper tests. They use stubs and do not start a model
+server or require a GPU. Run `ruff check tests skills/inference-optimisation/scripts`
+and `shellcheck skills/inference-optimisation/scripts/*.sh` to check the code.
+
 ## License
 
 MIT

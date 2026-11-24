@@ -10,7 +10,10 @@ c=${1:?container name}; mode=${2:-auto}
 pids=$(docker top "$c" -eo pid 2>/dev/null | tail -n +2 | tr '\n' ' ')
 [ -z "$pids" ] && { echo 0; exit 0; }
 cid=$(docker inspect -f '{{.Id}}' "$c")
-cg=$(ls -d /sys/fs/cgroup/system.slice/docker-"$cid".scope /sys/fs/cgroup/docker/"$cid" 2>/dev/null | head -1 || true)
+cg=""
+for path in /sys/fs/cgroup/docker/"$cid" /sys/fs/cgroup/system.slice/docker-"$cid".scope; do
+  if [ -d "$path" ]; then cg="$path"; break; fi
+done
 anon=$(awk '/^anon /{print $2}' "$cg/memory.stat" 2>/dev/null || echo 0)
 gpu=0
 if [ "$mode" != unified ] && command -v nvidia-smi >/dev/null; then
